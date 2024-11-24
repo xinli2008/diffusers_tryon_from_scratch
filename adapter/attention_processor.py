@@ -539,6 +539,12 @@ class RefSAttnProcessor2_0(torch.nn.Module):
             sa_hidden_states=None,
 
     ) -> torch.FloatTensor:
+        r"""
+        在Unet中, self-attention已经被替换成了Hybrid Attention。
+        它的运行原理是: 首先先进行original-self-attention得到hidden_states, 然后将original-self-attention将的query和
+        reference-unet中传过来的hidden_states作为key和value, 然后做另一次的attention。
+        最后将两个attention得到的hidden_states进行相加, 使用scale参数来balance占比大小。
+        """
         residual = hidden_states
         if attn.spatial_norm is not None:
             hidden_states = attn.spatial_norm(hidden_states, temb)
@@ -593,6 +599,7 @@ class RefSAttnProcessor2_0(torch.nn.Module):
 
         # for ref adapter
         if sa_hidden_states is not None:
+            # 根据self.name来定位到匹配的reference-unet-hidden-states。
             ref_hidden_states = sa_hidden_states[self.name]
             # for ref
             ref_key = self.to_k_ref(ref_hidden_states)

@@ -165,3 +165,4 @@ datasets/
 pretrained_models/
 demo.py
 sd-model-finetuned
+IGPair

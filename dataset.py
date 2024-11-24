@@ -9,7 +9,7 @@ import random
 from transformers import CLIPImageProcessor
 
 class TryonDataset(Dataset):
-    def __init__(self, json_file, tokenizer, size = 512, image_root_path = "./datasets"):
+    def __init__(self, json_file, tokenizer, size = 512, image_root_path = "./IGPair"):
         
         # if not os.path.exists(json_file):
         #     raise FileNotFoundError(f"{json_file} not exists")

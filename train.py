@@ -65,7 +65,7 @@ def parse_args():
     parser.add_argument(
         "--dataset_json_path",
         type=str,
-        default="datasets/IGPair.json",
+        default="IGPair/IGPair.json",
         help="Path to dataset json file.",
     )
 
@@ -244,9 +244,21 @@ class SDModel(torch.nn.Module):
         self.adapter_modules = adapter_modules
 
     def forward(self, encoder_hidden_states, latents, ref_latents, clip_image_embeddings, timesteps):
+        r"""
+        Perform SDModel forward
+        Args:
+            encoder_hidden_states: torch.Tensor, [b, seq_len, emb_dim]
+            latents: latents from image, torch.Tensor, [b, c, h, w]
+            ref_latents: latents from garment, torch.Tensor, [b, c, h, w]
+            clip_image_embeddings: embedding from clip with garment
+            timesteps: torch.Tensor
+        """
+        # NOTE: 在该ref-unet的实现中, reference-unet的timestep是zeros。
         ref_timesteps = torch.zeros_like(timesteps)
         cloth_proj_embed = self.proj(clip_image_embeddings)
 
+        # NOTE: 将涉及到garment的特征放入到reference-unet中, 因为前面reference-unet的注意力机制已经被替换
+        # 所以, 这里可以放cloth_proj_embed而不是encoder_hidden_states。
         _ = self.ref_unet(
             ref_latents,
             ref_timesteps,
@@ -254,16 +266,19 @@ class SDModel(torch.nn.Module):
             return_dict=False,
         )
         # get cache tensors
+        # NOTE: reference-unet处理完后, 利用cache变量去获取处理过的hidden_states。
         sa_hidden_states = {}
         for name in self.ref_unet.attn_processors.keys():
             sa_hidden_states[name] = self.ref_unet.attn_processors[name].cache["hidden_states"]
 
         # get noise predictions
         # Predict the noise residual and compute loss
+        # NOTE: 然后将处理过的hidden_states传入unet中进行噪声的预测
         noise_pred = self.unet(
             latents,
             timesteps,
             encoder_hidden_states=encoder_hidden_states,
+            # NOTE: 通过设置cross_attention_kwargs参数, 可以将reference-unet存储的hidden_states传入到unet中。
             cross_attention_kwargs={
                 "sa_hidden_states": sa_hidden_states,
             }
@@ -340,7 +355,7 @@ def main():
     attn_procs = {}
     st = unet.state_dict()
     for name in unet.attn_processors.keys():
-        # NOTE: 在sd的命名方式中, attn1表示自注意力机制, 而
+        # NOTE: 在sd的命名方式中, attn1表示自注意力机制, 而attn2是交叉注意力机制
         cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
         if name.startswith("mid_block"):
             hidden_size = unet.config.block_out_channels[-1]
@@ -350,10 +365,11 @@ def main():
         elif name.startswith("down_blocks"):
             block_id = int(name[len("down_blocks.")])
             hidden_size = unet.config.block_out_channels[block_id]
-        # lora_rank = hidden_size // 2 # args.lora_rank
+        # NOTE: 这里分别替换掉了Unet里面的自注意力机制和交叉注意力机制
         if cross_attention_dim is None:
             attn_procs[name] = RefSAttnProcessor2_0(name, hidden_size)
             layer_name = name.split(".processor")[0]
+            # NOTE: 初始化权重
             weights = {
                 "to_k_ref.weight": st[layer_name + ".to_k.weight"],
                 "to_v_ref.weight": st[layer_name + ".to_v.weight"],
@@ -366,7 +382,9 @@ def main():
     adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
     del st
 
+    # NOTE: reference-unet
     ref_unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
+    # 替换掉了reference-unet里面的所有注意力机制, 替换为CacheAttnProcessor2_0
     ref_unet.set_attn_processor(
         {name: CacheAttnProcessor2_0() for name in ref_unet.attn_processors.keys()})  # set cache
 
@@ -380,7 +398,7 @@ def main():
 
     sd_model = SDModel(unet, ref_unet, image_proj, adapter_modules)
 
-
+    # NOTE: 可以训练的模块包括: ImageProjection、reference-unet、unet的attention_processor
     params_to_opt = itertools.chain(sd_model.proj.parameters(), sd_model.ref_unet.parameters(),
                                     sd_model.adapter_modules.parameters())
     accelerator.print("Trainable parameters: proj:{:.2f}M, ref_unet:{:.2f}M, adapter_modules:{:.2f}M".format(
@@ -408,12 +426,7 @@ def main():
         timestep_spacing="trailing", prediction_type="epsilon",
     )
 
-    dataset = TryonDataset(
-        [
-            args.dataset_json_path,
-        ],
-        tokenizer,
-    )
+    dataset = TryonDataset([args.dataset_json_path,], tokenizer,)
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         dataset, num_replicas=accelerator.num_processes, rank=accelerator.process_index, shuffle=True
@@ -544,7 +557,6 @@ def main():
             # (this is the forward diffusion process)
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-
             clip_images = []
             for clip_image, drop_image_embed in zip(batch["clip_image"], batch["drop_image_embed"]):
                 if drop_image_embed == 1:
@@ -554,7 +566,6 @@ def main():
             clip_images = torch.stack(clip_images, dim=0)
 
             with torch.no_grad():
-                # print()
                 image_embeds = image_encoder(clip_images.to(accelerator.device, dtype=weight_dtype),
                                              output_hidden_states=True).hidden_states[-2]
 
@@ -575,10 +586,7 @@ def main():
             model_pred = sd_model(encoder_hidden_states, noisy_latents, ref_latents, image_embeds, timesteps)
 
             if args.snr_gamma == 0:
-
-                loss = F.mse_loss(
-                    model_pred.float(), target.float(), reduction="mean"
-                )
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
             else:
                 snr = compute_snr(noise_scheduler, timesteps)
                 if noise_scheduler.config.prediction_type == "v_prediction":
