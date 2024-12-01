@@ -19,9 +19,9 @@ pip install -r requirements.txt
 
 基于SD1.5 + Reference-Unet完成的虚拟换装。大概流程是: 
 
-第一步, 复制一份和sd1.5-unet结构相同的unet作为reference-unet, 它用来处理Garment Image。参考Ip-adapter的思路, 使用ImageProjection和set_attn_processor方法向reference_unet中传递Garment Image, 然后在unet的注意力机制中, 将Garment Features保存。
+第一步, 复制一份和sd1.5-unet相同结构的unet作为reference-unet, 利用unet的set_attn_processor方法替换掉reference-unet和denoising-unet中的注意力机制。参考Ip-adapter的做法, 使用ImageProjection方法获取Garment Features, 并将特征放入reference-unet中的注意力机制中, 并存储hidden states。
 
-第二步, 同样利用unet的set_attn_processor方法替换掉Denosing Unet的cross-attention, 使得它可以接受Reference-unet传递的garment-features。
+第二步, 将模型图放入denosing-unet, 获取reference-unet传递的garment-features, 完成商品信息与模特信息的融合。
 
 第三步, 训练模型。训练的模块有: ImageProjection、reference-unet和denosing-unet的注意力模块。
 
@@ -39,6 +39,14 @@ pip install -r requirements.txt
   title={Magic Clothing: Controllable Garment-Driven Image Synthesis},
   author={Chen, Weifeng and Gu, Tao and Xu, Yuhao and Chen, Chengcai},
   journal={arXiv preprint arXiv:2404.09512},
+  year={2024}
+}
+```
+```bibtex
+@article{xu2024ootdiffusion,
+  title={OOTDiffusion: Outfitting Fusion based Latent Diffusion for Controllable Virtual Try-on},
+  author={Xu, Yuhao and Gu, Tao and Chen, Weifeng and Chen, Chengcai},
+  journal={arXiv preprint arXiv:2403.01779},
   year={2024}
 }
 ```
