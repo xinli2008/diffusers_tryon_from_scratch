@@ -99,7 +99,6 @@ def parse_args():
         default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
-
     parser.add_argument(
         "--learning_rate",
         type=float,
@@ -119,11 +118,9 @@ def parse_args():
         help="The scheduler type to use.",
         choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
     )
-
     parser.add_argument(
         "--num_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
     )
-
     parser.add_argument(
         "--logging_dir",
         type=str,
@@ -133,7 +130,6 @@ def parse_args():
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
         ),
     )
-
     parser.add_argument(
         "--report_to",
         type=str,
@@ -253,11 +249,11 @@ class SDModel(torch.nn.Module):
             clip_image_embeddings: embedding from clip with garment
             timesteps: torch.Tensor
         """
-        # NOTE: 在该ref-unet的实现中, reference-unet的timestep是zeros。
+        # NOTE: 在该ref-unet的实现中, reference-unet的timestep设置为0。
         ref_timesteps = torch.zeros_like(timesteps)
         cloth_proj_embed = self.proj(clip_image_embeddings)
 
-        # NOTE: 将涉及到garment的特征放入到reference-unet中, 因为前面reference-unet的注意力机制已经被替换
+        # NOTE: 将涉及到garment的特征放入到reference-unet中, 因为reference-unet的注意力机制已经被替换
         # 所以, 这里可以放cloth_proj_embed而不是encoder_hidden_states。
         _ = self.ref_unet(
             ref_latents,
